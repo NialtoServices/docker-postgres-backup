@@ -1,0 +1,64 @@
+#!/bin/ash
+
+umask 077
+
+info() {
+  echo "$(basename "$0") [$(date +'%Y-%m-%d %H:%M:%S %Z')]  INFO: $*" >&2
+}
+
+warn() {
+  echo "$(basename "$0") [$(date +'%Y-%m-%d %H:%M:%S %Z')]  WARN: $*" >&2
+}
+
+fatal() {
+  echo "$(basename "$0") [$(date +'%Y-%m-%d %H:%M:%S %Z')] FATAL: $*" >&2
+  exit 1
+}
+
+cleanup() {
+  [ -n "${DUMP_PATH:-}" ] && rm -f "${DUMP_PATH}"
+}
+
+[ "$(id -u)" -eq 0 ] || fatal "superuser privileges are required to perform a backup"
+
+BACKUP_LOCKFILE_PATH="/run/lock/backup.lock"
+
+info "acquiring lock on ${BACKUP_LOCKFILE_PATH}"
+mkdir -p "$(dirname "${BACKUP_LOCKFILE_PATH}")" || fatal "failed to create lock directory"
+exec 9>"${BACKUP_LOCKFILE_PATH}"
+flock -x -n 9 || fatal "another backup is already running"
+
+echo "$$" > "${BACKUP_LOCKFILE_PATH}"
+
+trap cleanup INT TERM EXIT
+
+[ -n "${POSTGRES_HOST:-}" ] || fatal "'POSTGRES_HOST' is not set"
+[ -n "${POSTGRES_PORT:-}" ] || fatal "'POSTGRES_PORT' is not set"
+[ -n "${POSTGRES_USER:-}" ] || fatal "'POSTGRES_USER' is not set"
+[ -n "${POSTGRES_PASSWORD:-}" ] || fatal "'POSTGRES_PASSWORD' is not set"
+[ -n "${POSTGRES_DB:-}" ] || fatal "'POSTGRES_DB' is not set"
+[ -n "${RCLONE_REMOTE:-}" ] || fatal "'RCLONE_REMOTE' is not set"
+
+export PGHOST="${POSTGRES_HOST}"
+export PGPORT="${POSTGRES_PORT}"
+export PGUSER="${POSTGRES_USER}"
+export PGPASSWORD="${POSTGRES_PASSWORD}"
+
+DUMP_FILENAME="${POSTGRES_DB}.dump"
+DUMP_PATH="/tmp/${DUMP_FILENAME}"
+
+info "dumping database '${POSTGRES_DB}' to ${DUMP_PATH}"
+pg_dump \
+  --no-comments \
+  --no-owner \
+  --no-privileges \
+  --format=custom \
+  --file="${DUMP_PATH}" \
+  "${POSTGRES_DB}" || fatal "failed to dump database '${POSTGRES_DB}'"
+
+info "uploading ${DUMP_FILENAME} to ${RCLONE_REMOTE}"
+rclone copyto \
+  "${DUMP_PATH}" \
+  "${RCLONE_REMOTE}/${DUMP_FILENAME}" || fatal "failed to upload dump to ${RCLONE_REMOTE}"
+
+info "backup complete: ${RCLONE_REMOTE}/${DUMP_FILENAME}"

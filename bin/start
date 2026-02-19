@@ -1,0 +1,13 @@
+#!/bin/ash
+
+set -eu
+
+BACKUP_SCHEDULE="${BACKUP_SCHEDULE:-0 0 * * *}"
+
+export -p > /run/backup.env
+
+echo "# root" > /var/spool/cron/crontabs/root
+echo "${BACKUP_SCHEDULE} . /run/backup.env; /bin/nice -n 10 /usr/local/bin/notify-failure /usr/local/bin/backup" >> /var/spool/cron/crontabs/root
+chmod 600 /var/spool/cron/crontabs/root
+
+exec /usr/sbin/crond -f -d 6

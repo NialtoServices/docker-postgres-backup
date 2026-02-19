@@ -1,0 +1,90 @@
+#!/bin/sh
+
+notify_test() {
+  [ -n "${NOTIFY_FAILURE_WEBHOOK_URL}" ] || return 1
+
+  curl \
+    --silent \
+    --output /dev/null \
+    --request POST \
+    --form "payload_json={\"username\":\"${NOTIFY_FAILURE_USERNAME}\",\"content\":\"✅ This notification sent on **$(date)** ensures that notifications are working as expected.\"}" \
+    "${NOTIFY_FAILURE_WEBHOOK_URL}"
+}
+
+notify_error() {
+  [ -n "${NOTIFY_FAILURE_WEBHOOK_URL}" ] || return 1
+
+  curl \
+    --silent \
+    --output /dev/null \
+    --request POST \
+    --form "payload_json={\"username\":\"${NOTIFY_FAILURE_USERNAME}\",\"content\":\"🚨 A command exited with a non-zero code, but notifications with further details failed to send.\"}" \
+    "${NOTIFY_FAILURE_WEBHOOK_URL}"
+}
+
+notify_abnormal_exit() {
+  [ -n "${NOTIFY_FAILURE_WEBHOOK_URL}" ] || return 1
+
+  curl \
+    --silent \
+    --output /dev/null \
+    --request POST \
+    --form "payload_json={\"username\":\"${NOTIFY_FAILURE_USERNAME}\",\"content\":\"🚨 Command \`${NOTIFY_FAILURE_COMMAND}\` exited with code **${NOTIFY_FAILURE_STATUS}** on **${NOTIFY_FAILURE_DATE}**\"}" \
+    "${NOTIFY_FAILURE_WEBHOOK_URL}"
+}
+
+notify_abnormal_exit_with_log() {
+  [ -n "${NOTIFY_FAILURE_WEBHOOK_URL}" ] || return 1
+
+  curl \
+    --silent \
+    --output /dev/null \
+    --request POST \
+    --form "payload_json={\"username\":\"${NOTIFY_FAILURE_USERNAME}\",\"content\":\"🚨 Command \`${NOTIFY_FAILURE_COMMAND}\` exited with code **${NOTIFY_FAILURE_STATUS}** on **${NOTIFY_FAILURE_DATE}**\"}" \
+    --form "file1=@${NOTIFY_FAILURE_LOG_PATH};filename=log.txt" \
+    "${NOTIFY_FAILURE_WEBHOOK_URL}"
+}
+
+if [ -n "${NOTIFY_FAILURE_USERNAME:-}" ]
+then
+  NOTIFY_FAILURE_USERNAME="${NOTIFY_FAILURE_USERNAME} ($(hostname))"
+else
+  NOTIFY_FAILURE_USERNAME="$(hostname)"
+fi
+
+if [ "$*" = "_test" ]
+then
+  notify_test
+  exit $?
+fi
+
+NOTIFY_FAILURE_COMMAND="$1"
+NOTIFY_FAILURE_LOG_PATH="$(mktemp -t notify-failure.XXXXXX)"
+NOTIFY_FAILURE_STATUS_PATH="$(mktemp -t notify-failure-status.XXXXXX)"
+trap 'rm -f "${NOTIFY_FAILURE_LOG_PATH}" "${NOTIFY_FAILURE_STATUS_PATH}"' EXIT
+
+{
+  "${@}"
+  echo "$?" > "${NOTIFY_FAILURE_STATUS_PATH}"
+} 2>&1 | tee "${NOTIFY_FAILURE_LOG_PATH}"
+NOTIFY_FAILURE_STATUS="$(cat "${NOTIFY_FAILURE_STATUS_PATH}")"
+NOTIFY_FAILURE_DATE="$(date)"
+
+if [ ${NOTIFY_FAILURE_STATUS} -ne 0 ] && [ -n "${NOTIFY_FAILURE_WEBHOOK_URL}" ]
+then
+  if ! notify_abnormal_exit_with_log
+  then
+    sleep 60
+    if ! notify_abnormal_exit_with_log
+    then
+      sleep 60
+      if ! notify_abnormal_exit
+      then
+        sleep 60
+        notify_error
+      fi
+    fi
+  fi
+fi
+
+exit ${NOTIFY_FAILURE_STATUS}
