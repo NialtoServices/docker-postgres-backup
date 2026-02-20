@@ -19,7 +19,7 @@ ARG ALPINE_VERSION=3.23
 
 FROM alpine:${ALPINE_VERSION}
 
-LABEL org.opencontainers.image.description="PostgreSQL Backup"
+LABEL org.opencontainers.image.description="Scheduled PostgreSQL backups with rclone"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.source="https://github.com/NialtoServices/docker-postgres-backup"
 
