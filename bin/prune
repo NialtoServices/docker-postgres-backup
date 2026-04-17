@@ -1,0 +1,56 @@
+#!/bin/ash
+
+set -o pipefail
+umask 077
+
+info() {
+  echo "$(basename "$0") [$(date +'%Y-%m-%d %H:%M:%S %Z')]  INFO: $*" >&2
+}
+
+warn() {
+  echo "$(basename "$0") [$(date +'%Y-%m-%d %H:%M:%S %Z')]  WARN: $*" >&2
+}
+
+fatal() {
+  echo "$(basename "$0") [$(date +'%Y-%m-%d %H:%M:%S %Z')] FATAL: $*" >&2
+  exit 1
+}
+
+BACKUP_FILENAME_TIMESTAMPED="${BACKUP_FILENAME_TIMESTAMPED:-false}"
+BACKUP_MAX_VERSIONS="${BACKUP_MAX_VERSIONS:-0}"
+
+[ -n "${POSTGRES_DB:-}" ] || fatal "'POSTGRES_DB' is not set"
+[ -n "${RCLONE_REMOTE:-}" ] || fatal "'RCLONE_REMOTE' is not set"
+
+if ! [ "${BACKUP_MAX_VERSIONS}" -ge 0 ] 2>/dev/null
+then
+  fatal "'BACKUP_MAX_VERSIONS' must be a non-negative integer (got '${BACKUP_MAX_VERSIONS}')"
+fi
+
+if [ "${BACKUP_FILENAME_TIMESTAMPED}" != "true" ]
+then
+  warn "'BACKUP_FILENAME_TIMESTAMPED' is not 'true'; pruning would match no files"
+  exit 0
+fi
+
+if [ "${BACKUP_MAX_VERSIONS}" -eq 0 ]
+then
+  info "'BACKUP_MAX_VERSIONS' is 0; keeping all backups"
+  exit 0
+fi
+
+info "pruning old backups, keeping ${BACKUP_MAX_VERSIONS} most recent"
+
+# Filename timestamp sorts lex = chronologically; `sort -r` gives newest first.
+old_files="$(rclone lsf --include "${POSTGRES_DB}-*.dump" "${RCLONE_REMOTE}" | sort -r | tail -n +$((BACKUP_MAX_VERSIONS + 1)))" \
+  || fatal "failed to list remote objects"
+
+if [ -n "${old_files}" ]
+then
+  echo "${old_files}" | while IFS= read -r old_file
+  do
+    rclone deletefile "${RCLONE_REMOTE}/${old_file}" \
+      && info "pruned ${old_file}" \
+      || warn "failed to prune ${old_file}"
+  done
+fi

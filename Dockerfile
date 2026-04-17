@@ -30,6 +30,7 @@ RUN apk add --no-cache curl postgresql${POSTGRES_MAJOR}-client rclone tini util-
 
 COPY ./bin/backup /usr/local/bin/backup
 COPY ./bin/notify-failure /usr/local/bin/notify-failure
+COPY ./bin/prune /usr/local/bin/prune
 COPY ./bin/start /usr/local/bin/start
 
 ENTRYPOINT ["/sbin/tini", "--"]

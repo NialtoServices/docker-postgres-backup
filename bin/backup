@@ -32,6 +32,9 @@ echo "$$" > "${BACKUP_LOCKFILE_PATH}"
 
 trap cleanup INT TERM EXIT
 
+BACKUP_FILENAME_TIMESTAMPED="${BACKUP_FILENAME_TIMESTAMPED:-false}"
+BACKUP_MAX_VERSIONS="${BACKUP_MAX_VERSIONS:-0}"
+
 [ -n "${POSTGRES_HOST:-}" ] || fatal "'POSTGRES_HOST' is not set"
 [ -n "${POSTGRES_PORT:-}" ] || fatal "'POSTGRES_PORT' is not set"
 [ -n "${POSTGRES_USER:-}" ] || fatal "'POSTGRES_USER' is not set"
@@ -39,12 +42,28 @@ trap cleanup INT TERM EXIT
 [ -n "${POSTGRES_DB:-}" ] || fatal "'POSTGRES_DB' is not set"
 [ -n "${RCLONE_REMOTE:-}" ] || fatal "'RCLONE_REMOTE' is not set"
 
+if ! [ "${BACKUP_MAX_VERSIONS}" -ge 0 ] 2>/dev/null
+then
+  fatal "'BACKUP_MAX_VERSIONS' must be a non-negative integer (got '${BACKUP_MAX_VERSIONS}')"
+fi
+
+if [ "${BACKUP_MAX_VERSIONS}" -gt 0 ] && [ "${BACKUP_FILENAME_TIMESTAMPED}" != "true" ]
+then
+  warn "'BACKUP_MAX_VERSIONS' has no effect without 'BACKUP_FILENAME_TIMESTAMPED=true'"
+fi
+
 export PGHOST="${POSTGRES_HOST}"
 export PGPORT="${POSTGRES_PORT}"
 export PGUSER="${POSTGRES_USER}"
 export PGPASSWORD="${POSTGRES_PASSWORD}"
 
-DUMP_FILENAME="${POSTGRES_DB}.dump"
+if [ "${BACKUP_FILENAME_TIMESTAMPED}" = "true" ]
+then
+  DUMP_FILENAME="${POSTGRES_DB}-$(date -u +%Y-%m-%d-%H-%M-%S-UTC).dump"
+else
+  DUMP_FILENAME="${POSTGRES_DB}.dump"
+fi
+
 DUMP_PATH="/tmp/${DUMP_FILENAME}"
 
 info "dumping database '${POSTGRES_DB}' to ${DUMP_PATH}"
@@ -60,5 +79,10 @@ info "uploading ${DUMP_FILENAME} to ${RCLONE_REMOTE}"
 rclone copyto \
   "${DUMP_PATH}" \
   "${RCLONE_REMOTE}/${DUMP_FILENAME}" || fatal "failed to upload dump to ${RCLONE_REMOTE}"
+
+if [ "${BACKUP_FILENAME_TIMESTAMPED}" = "true" ] && [ "${BACKUP_MAX_VERSIONS}" -gt 0 ]
+then
+  /usr/local/bin/prune || warn "prune step failed"
+fi
 
 info "backup complete: ${RCLONE_REMOTE}/${DUMP_FILENAME}"
